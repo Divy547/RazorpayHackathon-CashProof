@@ -1,0 +1,1 @@
+"""CashProof test suite."""

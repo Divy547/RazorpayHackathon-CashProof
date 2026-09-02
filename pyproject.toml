@@ -1,0 +1,84 @@
+[project]
+name = "cashproof"
+version = "0.1.0"
+description = "CashProof: Evidence-First Settlement Controller"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "cashproof-domain",
+    "cashproof-application",
+    "cashproof-infrastructure",
+    "cashproof-ai",
+    "cashproof-benchmark",
+    "cashproof-api",
+    "cashproof-cli",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.5.0",
+    "mypy>=1.10.0",
+    "hypothesis>=6.100.0",
+]
+
+[tool.uv.workspace]
+members = [
+    "packages/*",
+    "apps/*",
+]
+
+[tool.uv.sources]
+cashproof-domain = { workspace = true }
+cashproof-application = { workspace = true }
+cashproof-infrastructure = { workspace = true }
+cashproof-ai = { workspace = true }
+cashproof-benchmark = { workspace = true }
+cashproof-api = { workspace = true }
+cashproof-cli = { workspace = true }
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+ignore = []
+
+[tool.mypy]
+python_version = "3.12"
+explicit_package_bases = true
+mypy_path = [
+    "packages/domain/src",
+    "packages/application/src",
+    "packages/infrastructure/src",
+    "packages/ai/src",
+    "packages/benchmark/src",
+    "apps/api/src",
+    "apps/cli/src",
+]
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
