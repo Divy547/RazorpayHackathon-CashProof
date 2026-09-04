@@ -13,6 +13,7 @@ const LINKS = [
   { href: "/confidence", label: "Confidence" },
   { href: "/scenarios", label: "Scenario Demo" },
   { href: "/benchmark", label: "Benchmark" },
+  { href: "/ingestion", label: "Data Sources" },
 ];
 
 export function Nav() {
