@@ -1,0 +1,204 @@
+"""Tests for live benchmark endpoints in CashProof API.
+
+Verifies:
+- POST /api/benchmarks (run creation and response serialization)
+- GET /api/benchmarks/{run_id} (fetching stored benchmark run)
+- 404 on missing benchmark run
+- 422 on invalid benchmark scale request (< 50 settlements)
+- Serialization of safety gate failure when false auto-resolutions occur
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from cashproof.api.app import create_app
+from cashproof.api.schemas import (
+    AIMetricOut,
+    BenchmarkRunOut,
+    BenchmarkTimingOut,
+    FamilyMetricOut,
+)
+from cashproof.application.ports import AIInvestigatorPort, InvestigationOutcome
+from cashproof.application.store import InMemoryCaseStore
+from cashproof.benchmark.service import InMemoryBenchmarkService
+from cashproof.domain.ai import InvestigatorBudget
+from fastapi.testclient import TestClient
+
+BUDGET = InvestigatorBudget(
+    max_tool_calls=5,
+    max_tokens=4000,
+    timeout_seconds=30.0,
+    temperature=0.0,
+    model_version="fake-model",
+)
+
+
+class DummyInvestigator(AIInvestigatorPort):
+    def investigate(self, **kwargs: Any) -> InvestigationOutcome:
+        raise NotImplementedError("Not needed for benchmark API tests")
+
+
+class MockFailingBenchmarkService:
+    """Mock service that returns a benchmark run with a safety gate failure."""
+
+    def __init__(self) -> None:
+        self.runs: dict[str, Any] = {}
+
+    def run_benchmark(
+        self,
+        seed: int = 42,
+        num_settlements: int = 50,
+        run_id: str | None = None,
+        arm: str = "deterministic",
+    ) -> Any:
+        rid = run_id or "failing_run_01"
+        out = BenchmarkRunOut(
+            run_id=rid,
+            seed=seed,
+            dataset_version="1.0.0",
+            rule_version="rules_v1",
+            code_revision="rev_test",
+            model_version=None,
+            prompt_version=None,
+            policy_version="pol_v1",
+            arm=arm,
+            total_cases=50,
+            auto_resolved=25,
+            human_review=20,
+            unresolved=5,
+            resolution_rate=0.5,
+            auto_resolution_rate=0.5,
+            human_review_rate=0.4,
+            unresolved_rate=0.1,
+            correct_auto_resolutions=23,
+            false_auto_resolutions=2,
+            exact_target_set_accuracy=23 / 25,
+            zero_false_auto_resolution=False,
+            safety_gate_passed=False,
+            false_auto_resolution_count=2,
+            correct_auto_resolution_count=23,
+            auto_resolution_count=25,
+            records_per_minute=1380.0,
+            metrics={"records_per_minute": 1380.0, "safety_gate_passed": 0.0},
+            timing=BenchmarkTimingOut(
+                pipeline_duration_seconds=1.0, timing_boundary="test boundary"
+            ),
+            scenario_matrix=[
+                FamilyMetricOut(
+                    scenario_family="S2",
+                    total=5,
+                    auto_resolved=2,
+                    human_review=3,
+                    unresolved=0,
+                    correct_outcomes=3,
+                    false_auto_resolutions=2,
+                )
+            ],
+            ai_metrics=AIMetricOut(),
+            case_evaluations=[],
+        )
+        self.runs[rid] = out
+        return out
+
+    def get_benchmark(self, run_id: str) -> Any | None:
+        return self.runs.get(run_id)
+
+
+def _make_client(service: Any | None = None) -> TestClient:
+    store = InMemoryCaseStore(
+        run_id="test_api_store",
+        settlements={},
+        items_by_settlement={},
+        payments_by_settlement={},
+        ledger_pool=[],
+    )
+    bench_service = service or InMemoryBenchmarkService()
+    app = create_app(
+        store=store,
+        investigator=DummyInvestigator(),
+        investigator_budget=BUDGET,
+        benchmark_service=bench_service,
+    )
+    return TestClient(app)
+
+
+def test_post_benchmarks_valid_creates_and_returns_run() -> None:
+    client = _make_client()
+    response = client.post("/api/benchmarks", json={"seed": 42, "num_settlements": 50})
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["seed"] == 42
+    assert data["total_cases"] == 50
+    assert data["safety_gate_passed"] is True
+    assert data["false_auto_resolution_count"] == 0
+    assert data["records_per_minute"] > 0
+    assert len(data["scenario_matrix"]) == 6
+    assert "timing" in data
+    assert "pipeline_duration_seconds" in data["timing"]
+
+    run_id = data["run_id"]
+
+    # Verify GET retrieves the same run
+    get_res = client.get(f"/api/benchmarks/{run_id}")
+    assert get_res.status_code == 200
+    get_data = get_res.json()
+    assert get_data["run_id"] == run_id
+    assert get_data["total_cases"] == 50
+
+
+def test_get_benchmark_not_found_returns_404() -> None:
+    client = _make_client()
+    response = client.get("/api/benchmarks/non_existent_run_id")
+    assert response.status_code == 404
+
+
+def test_post_benchmarks_under_minimum_scale_returns_422() -> None:
+    client = _make_client()
+    response = client.post("/api/benchmarks", json={"seed": 42, "num_settlements": 20})
+    assert response.status_code == 422
+    assert ">= 50" in response.json()["detail"]
+
+
+def test_safety_gate_failure_serialization() -> None:
+    client = _make_client(service=MockFailingBenchmarkService())
+    response = client.post("/api/benchmarks", json={"seed": 42, "num_settlements": 50})
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["safety_gate_passed"] is False
+    assert data["zero_false_auto_resolution"] is False
+    assert data["false_auto_resolution_count"] == 2
+    assert data["false_auto_resolutions"] == 2
+
+
+def test_get_benchmark_confidence_endpoints() -> None:
+    client = _make_client()
+
+    # 1. Default benchmark confidence triggers benchmark on the fly
+    resp = client.get("/api/benchmark/confidence")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert "overall_ece" in data
+    assert "overall_brier_score" in data
+    assert data["total_observations"] == 100
+    assert len(data["buckets"]) == 10
+    assert len(data["thresholds"]) == 11
+    assert len(data["gate_matrix"]) == 3
+    assert data["automation_opportunity"]["opportunity_count"] == 15
+    assert data["automation_opportunity"]["affected_settlement_net_minor"] == 17196914
+
+    run_id = data["run_id"]
+
+    # 2. Query by specific run_id
+    run_resp = client.get(f"/api/benchmarks/{run_id}/confidence")
+    assert run_resp.status_code == 200
+    run_data = run_resp.json()
+    assert run_data["run_id"] == run_id
+    assert run_data["overall_ece"] == data["overall_ece"]
+
+    # 3. 404 for unknown run_id
+    not_found = client.get("/api/benchmarks/unknown_run_id_999/confidence")
+    assert not_found.status_code == 404

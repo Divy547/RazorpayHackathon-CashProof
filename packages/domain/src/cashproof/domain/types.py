@@ -113,6 +113,7 @@ class HypothesisSource(enum.StrEnum):
 
     DETERMINISTIC_RULES = "DETERMINISTIC_RULES"
     AI_INVESTIGATION = "AI_INVESTIGATION"
+    HUMAN_REVIEW = "HUMAN_REVIEW"
 
 
 class MatchProvenance(enum.StrEnum):

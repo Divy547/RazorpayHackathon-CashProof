@@ -111,3 +111,80 @@ The Exception Center must render:
 - disposition and review state
 
 The UI must show the governance machinery, not merely a match/disposition badge.
+
+## Exception Intelligence & Clustering (Phase 6)
+
+The Exception Intelligence engine (`packages/application/src/cashproof/application/intelligence.py`) provides deterministic post-reconciliation clustering of all batch exceptions:
+
+1. **Deterministic Fingerprinting**:
+   Each non-auto-resolved case produces an immutable `ExceptionFingerprint` composed of:
+   - `operational_category`: High-level operational pattern (e.g. `REFERENCE_AMBIGUITY`, `AMOUNT_INCONSISTENCY`, `UNSTRUCTURED_REFERENCE`, `MISSING_RECORD`, `EVIDENCE_CONFLICT`, `POLICY_REVIEW`).
+   - `failing_check`: Deterministic gate check that rejected automated resolution (e.g. `BRIDGE`, `TARGET_SET_EQUALITY`, `POLICY`, `IDENTITY`).
+   - `candidate_count_bucket`: Structural density (`0`, `1`, `2_to_5`, `6_plus`).
+   - `dominant_provenance`: Match signal origin (e.g. `STRUCTURED_REFERENCE`, `EXTERNAL_REFERENCE_TEXT`, `NARRATION_ALIAS_TEXT`).
+   - `currency`: Monetary denomination (explicit integer minor units).
+   - `has_delta`: Boolean indicator if `delta != 0`.
+   - `disposition`: Target workflow state (`HUMAN_REVIEW`, `UNRESOLVED`).
+
+2. **Impact & Metrics Aggregation**:
+   Clusters aggregate:
+   - `case_count` and `percentage_of_exceptions` in the batch.
+   - `affected_settlement_net_minor`: Monetary volume of settlements encountering this exception.
+   - `affected_delta_minor`: Signed net accounting discrepancy that must be balanced.
+   - Deterministic representative selection (`-abs(delta)`, `-expected_net`, `case_id`).
+   - Actionable operational descriptions and remediation playbooks.
+
+3. **GroundTruth & Safety Isolation**:
+   The engine processes only production-visible `ReconciliationResult` and `Settlement` records. It contains zero imports or knowledge of evaluator `GroundTruth` or benchmark scenario definitions.
+
+## Gate Intelligence & Controller Explainability (Phase 7)
+
+The Gate Intelligence engine (`packages/application/src/cashproof/application/gate_intelligence.py`) makes the resolution gate observable, rankable, and operationally explainable without weakening, bypassing, or duplicating `evaluate_gate()`:
+
+1. **Zero Second Gate & Read-Only Governance**:
+   Gate Intelligence performs strictly read-only diagnostics over authoritative `GateEvaluation` instances produced by the pipeline. It never computes alternative gate decisions or re-evaluates financial rules.
+
+2. **Canonical Evaluation Precedence Rule**:
+   Cases may accumulate multiple gate evaluations across their lifecycle (e.g. initial reconciliation gate, AI hypothesis preview gate, and human review gate). To prevent preview evaluations from inflating failure counts, the service applies canonical resolution:
+   - If a `Resolution` exists, its `governing_gate_evaluation` is authoritative.
+   - Otherwise, the latest evaluation on the case is used.
+
+3. **Deterministic Explainability Catalog**:
+   The application maintains `DETERMINISTIC_GATE_EXPLANATIONS`, a static catalog covering all 9 mandatory checks (`IDENTITY`, `CURRENCY`, `BRIDGE`, `UNIQUENESS`, `EVIDENCE_COMPLETENESS`, `CONFLICT`, `POLICY`, `STATE_TRANSITION`, `TARGET_SET_EQUALITY`). Each entry details:
+   - Plain-language summary of the financial rule.
+   - Technical invariant enforcement description.
+   - Deterministic eligibility requirement answering "What exactly must change for this case to become eligible for automated resolution?".
+
+4. **Ranked Automation Blockers & Dual Monetary Metrics**:
+   - Automation blockers are ranked deterministically by `(-failure_count, -affected_volume, check_name)`.
+   - Dual monetary accounting distinguishes `affected_settlement_net_minor` (total settlement net volume blocked behind the firewall) from `affected_delta_minor` (signed accounting variance).
+
+5. **Bidirectional Intelligence Integration**:
+   Gate Intelligence connects failing checks to Phase 6 Exception Clusters, providing deep operational context from root exception pattern to gate firewall failure to case detail.
+
+## Confidence Calibration & Automation Quality Intelligence (Phase 8)
+
+The Confidence Calibration and Quality engine bridges hypothesis belief with deterministic financial safety:
+
+1. **Fundamental Principle: Belief vs Authorization**:
+   - Confidence represents matcher or AI hypothesis strength.
+   - The deterministic `GateEvaluation` represents legal, arithmetic, and policy authorization.
+   - Confidence is NEVER an input to `evaluate_gate()` and never authorizes automatic resolution. Even a hypothesis with 100% confidence fails closed when an invariant (such as BRIDGE fee balance) is violated.
+
+2. **Strict Evaluator vs Production Boundary**:
+   - **Evaluator Calibration (`cashproof.benchmark.confidence`)**:
+     Evaluates hypotheses against evaluator-only `GroundTruth`. Computes statistical Expected Calibration Error (ECE), Brier Calibration Score, 10-bin calibration curves, empirical threshold precision vs coverage curves, and identifies potential automation opportunities.
+   - **Operational Distribution (`cashproof.application.confidence`)**:
+     Computes production-visible hypothesis distribution across standard 10 bins, HIGH/MEDIUM/LOW gate tiers, and blocker check confidence contexts. Contains zero imports from `cashproof.benchmark` and zero knowledge of `GroundTruth`.
+
+3. **Exact Target-Set Equality for Empirical Accuracy**:
+   - Evaluator accuracy strictly requires `predicted_targets == ground_truth.exact_target_ledger_entry_ids`. Partial matches, superset matches, and disjoint matches count as false predictions.
+   - Non-provable cases (S6) where the model proposes a positive target are evaluated as false predictions.
+   - Classifier abstentions (ambiguous ties in S2, missing targets in S6) are explicitly distinguished from active prediction errors and provider failures.
+
+4. **Automation Opportunities Without Compromise**:
+   - Identifies high-confidence hypotheses whose predicted targets strictly match evaluator GroundTruth, but were held in human review due to deterministic financial discrepancies (e.g. S3 fee/tax differences).
+   - Accurately reports affected volume and blocker check attribution while strictly maintaining closed financial invariants.
+
+
+

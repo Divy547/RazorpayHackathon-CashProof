@@ -352,3 +352,115 @@ def test_failed_gate_cannot_produce_auto_resolved() -> None:
 
     with pytest.raises(ResolutionGateViolationError, match="requires a passing GateEvaluation"):
         Resolution.create_auto_resolved(gate)
+
+
+def test_evaluate_gate_human_review_policy_passes_for_unstructured_text() -> None:
+    case, settlement, item = _fixture_case_and_settlement(10000)
+    now = datetime.now(UTC)
+    entry = LedgerEntry("le_1", 10000, Currency.INR, now, Direction.CREDIT)
+    candidate = MatchCandidate(
+        "case_1", "le_1", 1.0, (), (), MatchProvenance.EXTERNAL_REFERENCE_TEXT, "v1", "run_1"
+    )
+    ev = Evidence(EvidencePointer("LedgerEntry", "le_1", "id"), 1.0, EvidenceStance.SUPPORTS, True)
+
+    gate = evaluate_gate(
+        case=case,
+        settlement=settlement,
+        items=item,
+        hypothesis_source=HypothesisSource.HUMAN_REVIEW,
+        proposed_target_ids=frozenset({"le_1"}),
+        target_ledger_entries=[entry],
+        deterministic_candidates=[candidate],
+        evidence=[ev],
+        already_resolved_target_ids=frozenset(),
+    )
+    assert gate.passed is True
+    assert gate.failing_check is None
+    policy_check = next(c for c in gate.check_outcomes if c.check_name == "POLICY")
+    assert policy_check.passed is True
+    assert "Explicit human review satisfies policy" in policy_check.reason
+
+
+def test_evaluate_gate_human_review_target_set_equality_allows_subset() -> None:
+    case, settlement, item = _fixture_case_and_settlement(10000)
+    now = datetime.now(UTC)
+    entry1 = LedgerEntry("le_1", 10000, Currency.INR, now, Direction.CREDIT)
+    cand1 = MatchCandidate(
+        "case_1", "le_1", 1.0, (), (), MatchProvenance.STRUCTURED_REFERENCE, "v1", "run_1"
+    )
+    cand2 = MatchCandidate(
+        "case_1", "le_2", 1.0, (), (), MatchProvenance.STRUCTURED_REFERENCE, "v1", "run_1"
+    )
+    ev1 = Evidence(EvidencePointer("LedgerEntry", "le_1", "id"), 1.0, EvidenceStance.SUPPORTS, True)
+
+    # Human selects subset {le_1} from pool {le_1, le_2}
+    gate = evaluate_gate(
+        case=case,
+        settlement=settlement,
+        items=item,
+        hypothesis_source=HypothesisSource.HUMAN_REVIEW,
+        proposed_target_ids=frozenset({"le_1"}),
+        target_ledger_entries=[entry1],
+        deterministic_candidates=[cand1, cand2],
+        evidence=[ev1],
+        already_resolved_target_ids=frozenset(),
+    )
+    assert gate.passed is True
+    tse_check = next(c for c in gate.check_outcomes if c.check_name == "TARGET_SET_EQUALITY")
+    assert tse_check.passed is True
+
+
+def test_evaluate_gate_human_review_target_set_equality_rejects_extra_candidate() -> None:
+    case, settlement, item = _fixture_case_and_settlement(10000)
+    now = datetime.now(UTC)
+    entry_extra = LedgerEntry("le_extra", 10000, Currency.INR, now, Direction.CREDIT)
+    cand1 = MatchCandidate(
+        "case_1", "le_1", 1.0, (), (), MatchProvenance.STRUCTURED_REFERENCE, "v1", "run_1"
+    )
+    cand2 = MatchCandidate(
+        "case_1", "le_2", 1.0, (), (), MatchProvenance.STRUCTURED_REFERENCE, "v1", "run_1"
+    )
+    ev = Evidence(
+        EvidencePointer("LedgerEntry", "le_extra", "id"), 1.0, EvidenceStance.SUPPORTS, True
+    )
+
+    # Human proposes entry outside the candidate pool
+    gate = evaluate_gate(
+        case=case,
+        settlement=settlement,
+        items=item,
+        hypothesis_source=HypothesisSource.HUMAN_REVIEW,
+        proposed_target_ids=frozenset({"le_extra"}),
+        target_ledger_entries=[entry_extra],
+        deterministic_candidates=[cand1, cand2],
+        evidence=[ev],
+        already_resolved_target_ids=frozenset(),
+    )
+    assert gate.passed is False
+    tse_check = next(c for c in gate.check_outcomes if c.check_name == "TARGET_SET_EQUALITY")
+    assert tse_check.passed is False
+    assert "entries outside candidate pool" in tse_check.reason
+
+
+def test_evaluate_gate_human_review_target_set_equality_rejects_empty_set() -> None:
+    case, settlement, item = _fixture_case_and_settlement(10000)
+    cand1 = MatchCandidate(
+        "case_1", "le_1", 1.0, (), (), MatchProvenance.STRUCTURED_REFERENCE, "v1", "run_1"
+    )
+
+    # Human proposes empty target set
+    gate = evaluate_gate(
+        case=case,
+        settlement=settlement,
+        items=item,
+        hypothesis_source=HypothesisSource.HUMAN_REVIEW,
+        proposed_target_ids=frozenset(),
+        target_ledger_entries=[],
+        deterministic_candidates=[cand1],
+        evidence=[],
+        already_resolved_target_ids=frozenset(),
+    )
+    assert gate.passed is False
+    tse_check = next(c for c in gate.check_outcomes if c.check_name == "TARGET_SET_EQUALITY")
+    assert tse_check.passed is False
+    assert "Human review target set is empty" in tse_check.reason

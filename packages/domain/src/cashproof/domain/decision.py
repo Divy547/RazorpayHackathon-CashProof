@@ -295,14 +295,25 @@ def evaluate_gate(
         or MatchProvenance.NARRATION_ALIAS_TEXT in candidate_provenances.get(t_id, set())
     ]
     if unstructured_targets:
-        outcomes.append(
-            GateCheckOutcome(
-                "POLICY",
-                False,
-                f"Targets {sorted(unstructured_targets)} derive from unstructured/narration text. "
-                "Policy requires HUMAN_REVIEW.",
+        targets_desc = sorted(unstructured_targets)
+        if hypothesis_source == HypothesisSource.HUMAN_REVIEW:
+            outcomes.append(
+                GateCheckOutcome(
+                    "POLICY",
+                    True,
+                    f"Targets {targets_desc} derive from unstructured/narration text. "
+                    "Explicit human review satisfies policy.",
+                )
             )
-        )
+        else:
+            outcomes.append(
+                GateCheckOutcome(
+                    "POLICY",
+                    False,
+                    f"Targets {targets_desc} derive from unstructured/narration text. "
+                    "Policy requires HUMAN_REVIEW.",
+                )
+            )
     else:
         outcomes.append(GateCheckOutcome("POLICY", True, "Targets satisfy auto-resolution policy."))
 
@@ -322,20 +333,47 @@ def evaluate_gate(
 
     # Check 9: TARGET_SET_EQUALITY
     deterministic_candidate_ids = frozenset(c.ledger_entry_id for c in clean_candidates)
-    if clean_proposed_ids != deterministic_candidate_ids:
-        missing_cands = sorted(deterministic_candidate_ids - clean_proposed_ids)
+    if hypothesis_source == HypothesisSource.HUMAN_REVIEW:
         extra_cands = sorted(clean_proposed_ids - deterministic_candidate_ids)
-        outcomes.append(
-            GateCheckOutcome(
-                "TARGET_SET_EQUALITY",
-                False,
-                f"Target set mismatch: missing={missing_cands}, extra={extra_cands}",
+        if not clean_proposed_ids:
+            outcomes.append(
+                GateCheckOutcome(
+                    "TARGET_SET_EQUALITY",
+                    False,
+                    "Human review target set is empty.",
+                )
             )
-        )
+        elif extra_cands:
+            outcomes.append(
+                GateCheckOutcome(
+                    "TARGET_SET_EQUALITY",
+                    False,
+                    f"Target set contains entries outside candidate pool: {extra_cands}",
+                )
+            )
+        else:
+            outcomes.append(
+                GateCheckOutcome(
+                    "TARGET_SET_EQUALITY",
+                    True,
+                    "Human review candidate selection is valid within candidate pool.",
+                )
+            )
     else:
-        outcomes.append(
-            GateCheckOutcome("TARGET_SET_EQUALITY", True, "Exact target-set equality verified.")
-        )
+        if clean_proposed_ids != deterministic_candidate_ids:
+            missing_cands = sorted(deterministic_candidate_ids - clean_proposed_ids)
+            extra_cands = sorted(clean_proposed_ids - deterministic_candidate_ids)
+            outcomes.append(
+                GateCheckOutcome(
+                    "TARGET_SET_EQUALITY",
+                    False,
+                    f"Target set mismatch: missing={missing_cands}, extra={extra_cands}",
+                )
+            )
+        else:
+            outcomes.append(
+                GateCheckOutcome("TARGET_SET_EQUALITY", True, "Exact target-set equality verified.")
+            )
 
     mandatory_failed = [c for c in outcomes if c.is_mandatory and not c.passed]
     passed = len(mandatory_failed) == 0
@@ -398,6 +436,10 @@ class Resolution:
             )
 
         if disposition == Disposition.AUTO_RESOLVED:
+            if governing_gate_evaluation.hypothesis_source != HypothesisSource.DETERMINISTIC_RULES:
+                raise ResolutionGovernanceError(
+                    "AUTO_RESOLVED requires a DETERMINISTIC_RULES gate evaluation."
+                )
             if not governing_gate_evaluation.passed:
                 raise ResolutionGateViolationError(
                     f"AUTO_RESOLVED requires a passing GateEvaluation "
@@ -417,6 +459,13 @@ class Resolution:
                 if not reviewer or not reviewed_at:
                     raise ResolutionGovernanceError(
                         "APPROVED human review requires reviewer and reviewed_at."
+                    )
+                if not governing_gate_evaluation.passed:
+                    raise ResolutionGateViolationError(
+                        f"APPROVED human review requires a passing GateEvaluation "
+                        f"(failed: {governing_gate_evaluation.failing_check}). "
+                        "A reviewer cannot approve a resolution the deterministic gate "
+                        "has rejected."
                     )
             elif review_outcome == ReviewOutcome.PENDING:
                 if reviewer is not None or reviewed_at is not None:

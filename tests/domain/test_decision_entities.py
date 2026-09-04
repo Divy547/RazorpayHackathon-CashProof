@@ -19,6 +19,7 @@ from cashproof.domain.derived import (
 )
 from cashproof.domain.exceptions import (
     LedgerEntryAlreadyResolvedError,
+    ResolutionGateViolationError,
     ResolutionGovernanceError,
     ResolutionScopeMismatchError,
     ResolutionTargetMismatchError,
@@ -41,7 +42,9 @@ from cashproof.domain.types import (
 )
 
 
-def _passing_gate() -> tuple[ReconciliationCase, GateEvaluation]:
+def _passing_gate(
+    hypothesis_source: HypothesisSource = HypothesisSource.DETERMINISTIC_RULES,
+) -> tuple[ReconciliationCase, GateEvaluation]:
     now = datetime.now(UTC)
     settlement = Settlement("set_1", 10000, Currency.INR, now)
     item = SettlementItem("item_1", "set_1", "pay_1", 10000, 0, 0, 0, 0, 10000)
@@ -65,7 +68,7 @@ def _passing_gate() -> tuple[ReconciliationCase, GateEvaluation]:
         case=case,
         settlement=settlement,
         items=item,
-        hypothesis_source=HypothesisSource.DETERMINISTIC_RULES,
+        hypothesis_source=hypothesis_source,
         proposed_target_ids=frozenset({"le_1"}),
         target_ledger_entries=[entry],
         deterministic_candidates=[cand],
@@ -110,6 +113,78 @@ def test_resolution_human_reviewed_approved_factory() -> None:
     assert res.review_outcome == ReviewOutcome.APPROVED
     assert res.reviewer == "rev_alice"
     assert res.reviewed_at == now
+
+
+def _failing_gate() -> tuple[ReconciliationCase, GateEvaluation]:
+    """A case/gate where the observed ledger entry's amount mismatches the expected
+    net, so BRIDGE fails - deliberately unsafe for APPROVED human review.
+    """
+    now = datetime.now(UTC)
+    settlement = Settlement("set_2", 10000, Currency.INR, now)
+    item = SettlementItem("item_2", "set_2", "pay_2", 10000, 0, 0, 0, 0, 10000)
+    case = ReconciliationCase(
+        "case_2",
+        "set_2",
+        "run_1",
+        10000,
+        9000,
+        1000,
+        ExceptionType.AMOUNT_MISMATCH,
+        ProcessingState.INVESTIGATED,
+    )
+    entry = LedgerEntry("le_2", 9000, Currency.INR, now, Direction.CREDIT)
+    cand = MatchCandidate(
+        "case_2", "le_2", 0.8, (), (), MatchProvenance.STRUCTURED_REFERENCE, "v1", "run_1"
+    )
+    ev = Evidence(EvidencePointer("LedgerEntry", "le_2", "id"), 1.0, EvidenceStance.SUPPORTS, True)
+
+    gate = evaluate_gate(
+        case=case,
+        settlement=settlement,
+        items=item,
+        hypothesis_source=HypothesisSource.DETERMINISTIC_RULES,
+        proposed_target_ids=frozenset({"le_2"}),
+        target_ledger_entries=[entry],
+        deterministic_candidates=[cand],
+        evidence=[ev],
+        already_resolved_target_ids=frozenset(),
+    )
+    assert gate.passed is False and gate.failing_check == "BRIDGE"
+    return case, gate
+
+
+def test_resolution_human_reviewed_approved_requires_passing_gate() -> None:
+    """Safety-critical: a reviewer cannot APPROVE a resolution over a failed gate.
+
+    Regression for the human-review workflow: Resolution.create_human_reviewed()
+    must reject APPROVED outcomes governed by a failing GateEvaluation exactly
+    like create_auto_resolved() already does for AUTO_RESOLVED.
+    """
+    _, gate = _failing_gate()
+    now = datetime.now(UTC)
+
+    with pytest.raises(ResolutionGateViolationError, match="APPROVED human review requires"):
+        Resolution.create_human_reviewed(
+            gate=gate,
+            reviewer="rev_alice",
+            review_outcome=ReviewOutcome.APPROVED,
+            reviewed_at=now,
+        )
+
+
+def test_resolution_human_reviewed_rejected_allowed_over_failed_gate() -> None:
+    """REJECTED never authorizes anything, so it remains legal over a failing gate."""
+    _, gate = _failing_gate()
+    now = datetime.now(UTC)
+
+    res = Resolution.create_human_reviewed(
+        gate=gate,
+        reviewer="rev_bob",
+        review_outcome=ReviewOutcome.REJECTED,
+        reviewed_at=now,
+    )
+    assert res.disposition == Disposition.UNRESOLVED
+    assert res.review_outcome == ReviewOutcome.REJECTED
 
 
 def test_resolution_human_reviewed_rejected_factory() -> None:
@@ -174,6 +249,21 @@ def test_resolution_auto_resolved_with_reviewer_raises() -> None:
             target_ledger_entry_ids=gate.target_ledger_entry_ids,
             governing_gate_evaluation=gate,
             reviewer="Alice",
+        )
+
+
+def test_resolution_auto_resolved_requires_deterministic_rules_gate() -> None:
+    _, human_gate = _passing_gate(hypothesis_source=HypothesisSource.HUMAN_REVIEW)
+    with pytest.raises(
+        ResolutionGovernanceError,
+        match="AUTO_RESOLVED requires a DETERMINISTIC_RULES gate evaluation",
+    ):
+        Resolution(
+            case_id=human_gate.case_id,
+            run_id=human_gate.run_id,
+            disposition=Disposition.AUTO_RESOLVED,
+            target_ledger_entry_ids=human_gate.target_ledger_entry_ids,
+            governing_gate_evaluation=human_gate,
         )
 
 

@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "cashproof-domain",
     "cashproof-application",
+    "anthropic>=0.40.0",
 ]
 
 [build-system]
