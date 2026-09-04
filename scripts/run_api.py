@@ -26,6 +26,7 @@ from cashproof.benchmark.generator.config import GeneratorConfig
 from cashproof.benchmark.service import InMemoryBenchmarkService
 from cashproof.domain.ai import InvestigatorBudget
 from cashproof.domain.source import Payment, SettlementItem
+from cashproof.infrastructure.razorpay import RazorpayConnector
 
 SEED = 42
 NUM_SETTLEMENTS = 100
@@ -106,7 +107,24 @@ def main() -> None:
         investigator_budget=INVESTIGATOR_BUDGET,
     )
 
-    app = create_app(store, investigator, INVESTIGATOR_BUDGET, benchmark_service=benchmark_service)
+    # RazorpayConnector gracefully reports UNCONFIGURED (never crashes) if
+    # RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET are unset - the synthetic/demo path
+    # above works unchanged either way.
+    razorpay_connector = RazorpayConnector()
+    if not razorpay_connector.status().configured:
+        print(
+            "WARNING: RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET are not set. "
+            "POST /api/ingestion/razorpay will fail closed until both are configured; "
+            "bank statement CSV ingestion and reconciliation are unaffected."
+        )
+
+    app = create_app(
+        store,
+        investigator,
+        INVESTIGATOR_BUDGET,
+        benchmark_service=benchmark_service,
+        razorpay_connector=razorpay_connector,
+    )
     uvicorn.run(app, host="127.0.0.1", port=8000)
 
 

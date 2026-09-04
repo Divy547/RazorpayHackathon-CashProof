@@ -38,6 +38,7 @@ from cashproof.api.schemas import (
     GateIntelligenceResponse,
     GateOut,
     GateTierSummaryOut,
+    IngestionRunOut,
     InvestigationOut,
     OperationalConfidenceBucketOut,
     OperationalConfidenceResponse,
@@ -64,6 +65,7 @@ from cashproof.application.intelligence import (
     ExceptionIntelligenceSummary,
 )
 from cashproof.application.investigation import InvestigationRunResult
+from cashproof.application.ports import IngestionRun
 from cashproof.application.use_case import ReconciliationResult
 from cashproof.domain.decision import GateEvaluation
 from cashproof.domain.derived import Evidence
@@ -206,6 +208,22 @@ def investigation_result(run_result: InvestigationRunResult) -> InvestigationRes
             if run_result.preview_gate is not None
             else None
         ),
+    )
+
+
+def serialize_ingestion_run(run: IngestionRun) -> IngestionRunOut:
+    return IngestionRunOut(
+        run_id=run.run_id,
+        source=run.source,
+        status=run.status.value,
+        fetched_count=run.fetched_count,
+        accepted_count=run.accepted_count,
+        rejected_count=run.rejected_count,
+        duplicate_count=run.duplicate_count,
+        validation_errors=list(run.validation_errors),
+        failure_reason=run.failure_reason,
+        started_at=run.started_at.isoformat(),
+        completed_at=run.completed_at.isoformat(),
     )
 
 

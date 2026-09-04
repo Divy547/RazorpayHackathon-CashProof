@@ -1,0 +1,9 @@
+transaction_id,timestamp,amount_minor,currency,direction,payment_ref,external_ref,narration,customer_name
+bank_demo_txn_0001,2024-01-05T09:30:00+00:00,1250000,INR,CREDIT,setl_demo_20240105,,NEFT settlement credit,
+bank_demo_txn_0002,2024-01-06T11:15:00+00:00,845000,INR,CREDIT,setl_demo_20240106,,NEFT settlement credit,
+bank_demo_txn_0003,2024-01-07T14:05:00+00:00,32000,INR,DEBIT,,chargeback_ref_9001,Chargeback debit,
+bank_demo_txn_0004,2024-01-08T08:45:00+00:00,502500,INR,CREDIT,setl_demo_20240108,,NEFT settlement credit,
+bank_demo_txn_0005,2024-01-09T16:20:00+00:00,15000,INR,DEBIT,,bank_fee_ref_112,Monthly bank service fee,
+bank_demo_txn_0006,2024-01-10T10:00:00+00:00,998000,INR,CREDIT,setl_demo_20240110,,NEFT settlement credit,
+bank_demo_txn_0007,2024-01-11T13:40:00+00:00,45000,INR,CREDIT,,unlinked_credit_ref_7,Unreconciled inward credit,Acme Traders
+bank_demo_txn_0008,2024-01-12T09:05:00+00:00,1755000,INR,CREDIT,setl_demo_20240112,,NEFT settlement credit,

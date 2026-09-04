@@ -14,14 +14,22 @@ import threading
 from dataclasses import dataclass, field
 
 from cashproof.application.investigation import InvestigationRunResult
+from cashproof.application.ports import IngestionRun, NormalizedSourceBatch
 from cashproof.application.use_case import ReconciliationResult
-from cashproof.domain.source import LedgerEntry, Payment, Settlement, SettlementItem
+from cashproof.domain.source import LedgerEntry, Payment, Refund, Settlement, SettlementItem
 from cashproof.domain.types import Disposition, ReviewOutcome
 
 
 @dataclass(slots=True)
 class InMemoryCaseStore:
-    """Mutable, process-local store synchronized via a threading.Lock."""
+    """Mutable, process-local store synchronized via a threading.Lock.
+
+    Also implements IngestionResultStore (Phase 9): ingestion is orthogonal
+    to reconciliation, so this same store simply gains a second, independent
+    set of fields (ingestion_runs, ingested_source_fingerprints, refunds) -
+    add_source_records() only ever appends accepted source facts; it never
+    triggers reconciliation itself.
+    """
 
     run_id: str
     settlements: dict[str, Settlement]
@@ -30,6 +38,9 @@ class InMemoryCaseStore:
     ledger_pool: list[LedgerEntry]
     results: dict[str, ReconciliationResult] = field(default_factory=dict)
     investigations: dict[str, InvestigationRunResult] = field(default_factory=dict)
+    refunds_by_payment: dict[str, list[Refund]] = field(default_factory=dict)
+    ingestion_runs: dict[str, IngestionRun] = field(default_factory=dict)
+    ingested_source_fingerprints: dict[str, str] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     @property
@@ -68,3 +79,39 @@ class InMemoryCaseStore:
             ):
                 claimed.update(result.resolution.target_ledger_entry_ids)
         return frozenset(claimed)
+
+    # -- IngestionResultStore (Phase 9) --------------------------------
+
+    def record_ingestion_run(self, run: IngestionRun) -> None:
+        self.ingestion_runs[run.run_id] = run
+
+    def get_ingestion_run(self, run_id: str) -> IngestionRun | None:
+        return self.ingestion_runs.get(run_id)
+
+    def list_ingestion_runs(self) -> list[IngestionRun]:
+        return sorted(self.ingestion_runs.values(), key=lambda r: r.started_at, reverse=True)
+
+    def get_ingested_fingerprint(self, external_id: str) -> str | None:
+        return self.ingested_source_fingerprints.get(external_id)
+
+    def register_source_id(self, external_id: str, fingerprint: str) -> None:
+        self.ingested_source_fingerprints[external_id] = fingerprint
+
+    def add_source_records(self, batch: NormalizedSourceBatch) -> None:
+        """Store accepted source records only. Never triggers reconciliation."""
+        for settlement in batch.settlements:
+            self.settlements[settlement.settlement_id] = settlement
+
+        for item in batch.settlement_items:
+            self.items_by_settlement.setdefault(item.settlement_id, []).append(item)
+
+        payment_by_id = {p.id: p for p in batch.payments}
+        for item in batch.settlement_items:
+            payment = payment_by_id.get(item.payment_id)
+            if payment is not None:
+                self.payments_by_settlement.setdefault(item.settlement_id, []).append(payment)
+
+        for refund in batch.refunds:
+            self.refunds_by_payment.setdefault(refund.payment_id, []).append(refund)
+
+        self.ledger_pool.extend(batch.ledger_entries)

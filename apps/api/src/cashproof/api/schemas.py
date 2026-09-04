@@ -132,6 +132,40 @@ class ErrorResponse(BaseModel):
     detail: str
 
 
+# Phase 9: Ingestion schemas
+class ConnectorStatusResponse(BaseModel):
+    connector_name: str
+    configured: bool
+    detail: str
+
+
+class IngestionStatusResponse(BaseModel):
+    connectors: list[ConnectorStatusResponse]
+
+
+class IngestionTriggerRequest(BaseModel):
+    year: int
+    month: int
+
+
+class IngestionRunOut(BaseModel):
+    run_id: str
+    source: str
+    status: str
+    fetched_count: int
+    accepted_count: int
+    rejected_count: int
+    duplicate_count: int
+    validation_errors: list[str]
+    failure_reason: str | None
+    started_at: str
+    completed_at: str
+
+
+class BankStatementIngestionResponse(IngestionRunOut):
+    """Same shape as IngestionRunOut; named separately per the bank upload contract."""
+
+
 class BenchmarkRunRequest(BaseModel):
     seed: int = 42
     num_settlements: int = 100

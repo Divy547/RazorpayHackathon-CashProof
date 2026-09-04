@@ -21,11 +21,15 @@ from cashproof.api.schemas import (
     CaseClusterOut,
     CaseDetail,
     CaseSummary,
+    ConnectorStatusResponse,
     ControllerGateOutcomeOut,
     ExceptionClusterDetailOut,
     ExceptionIntelligenceResponse,
     GateCheckBreakdownOut,
     GateIntelligenceResponse,
+    IngestionRunOut,
+    IngestionStatusResponse,
+    IngestionTriggerRequest,
     InvestigationResult,
     OperationalConfidenceResponse,
     ReviewRequest,
@@ -41,13 +45,25 @@ from cashproof.api.serializers import (
     serialize_exception_intelligence,
     serialize_gate_check_breakdown,
     serialize_gate_intelligence,
+    serialize_ingestion_run,
     serialize_operational_confidence,
 )
+from cashproof.application.batch import BatchReconciler
 from cashproof.application.confidence import OperationalConfidenceService
 from cashproof.application.gate_intelligence import GateIntelligenceService
+from cashproof.application.ingestion import (
+    DuplicateSourceConflictError,
+    IngestionService,
+    IngestionValidationError,
+)
 from cashproof.application.intelligence import ExceptionIntelligenceService
 from cashproof.application.investigation import AIInvestigationUseCase
-from cashproof.application.ports import AIInvestigatorPort
+from cashproof.application.ports import (
+    AIInvestigatorPort,
+    ConnectorStatus,
+    NormalizedSourceBatch,
+    SourceConnectorPort,
+)
 from cashproof.application.review import (
     HumanReviewUseCase,
     InvalidCandidateSelectionError,
@@ -55,7 +71,8 @@ from cashproof.application.review import (
 )
 from cashproof.application.store import InMemoryCaseStore
 from cashproof.domain.ai import InvestigatorBudget
-from fastapi import FastAPI, HTTPException
+from cashproof.infrastructure.bank.csv_parser import parse_bank_statement
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -75,11 +92,31 @@ class BenchmarkServiceProtocol(Protocol):
     def list_benchmarks(self) -> list[Any]: ...
 
 
+class _UnconfiguredConnector:
+    """Default Razorpay connector stub used when the caller wires none in.
+
+    Reports UNCONFIGURED (no secrets involved) rather than making create_app()
+    require a connector argument every existing caller/test would otherwise
+    need to pass.
+    """
+
+    def status(self) -> ConnectorStatus:
+        return ConnectorStatus(
+            connector_name="razorpay",
+            configured=False,
+            detail="No Razorpay connector was wired into this API instance.",
+        )
+
+    def fetch(self, *, year: int, month: int) -> NormalizedSourceBatch:
+        raise RuntimeError("Razorpay connector is not configured for this API instance.")
+
+
 def create_app(
     store: InMemoryCaseStore,
     investigator: AIInvestigatorPort,
     investigator_budget: InvestigatorBudget,
     benchmark_service: BenchmarkServiceProtocol | None = None,
+    razorpay_connector: SourceConnectorPort | None = None,
 ) -> FastAPI:
     app = FastAPI(title="CashProof API", version="0.1.0")
     app.add_middleware(
@@ -94,6 +131,8 @@ def create_app(
     intelligence_service = ExceptionIntelligenceService()
     gate_intelligence_service = GateIntelligenceService(intelligence_service)
     operational_confidence_service = OperationalConfidenceService()
+    connector: SourceConnectorPort = razorpay_connector or _UnconfiguredConnector()
+    ingestion_service = IngestionService(store)
 
     @app.get("/api/cases", response_model=list[CaseSummary])
     def list_cases() -> list[CaseSummary]:
@@ -377,5 +416,102 @@ def create_app(
                 status_code=500, detail="Default benchmark did not produce a confidence report."
             )
         return serialize_benchmark_confidence(run.run_id, run.confidence_report)
+
+    # Ingestion endpoints (Phase 9)
+    @app.get("/api/ingestion/status", response_model=IngestionStatusResponse)
+    def ingestion_status() -> IngestionStatusResponse:
+        rp = connector.status()
+        return IngestionStatusResponse(
+            connectors=[
+                ConnectorStatusResponse(
+                    connector_name=rp.connector_name, configured=rp.configured, detail=rp.detail
+                ),
+                ConnectorStatusResponse(
+                    connector_name="bank_statement",
+                    configured=True,
+                    detail="CSV upload endpoint; no external credentials required.",
+                ),
+            ]
+        )
+
+    @app.post("/api/ingestion/razorpay", response_model=IngestionRunOut)
+    def ingest_razorpay(request: IngestionTriggerRequest) -> IngestionRunOut:
+        with store.lock:
+            try:
+                run = ingestion_service.ingest_from_connector(
+                    connector,
+                    source="razorpay",
+                    year=request.year,
+                    month=request.month,
+                    now=datetime.now(UTC),
+                )
+            except DuplicateSourceConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return serialize_ingestion_run(run)
+
+    @app.post("/api/ingestion/bank-statement", response_model=IngestionRunOut)
+    async def ingest_bank_statement(file: UploadFile) -> IngestionRunOut:
+        content = await file.read()
+        with store.lock:
+            try:
+                parse_result = parse_bank_statement(content)
+            except IngestionValidationError as exc:
+                run = ingestion_service.record_validation_failure(
+                    source="bank_statement", error=exc, now=datetime.now(UTC)
+                )
+                return serialize_ingestion_run(run)
+
+            batch = NormalizedSourceBatch(ledger_entries=parse_result.ledger_entries)
+            try:
+                run = ingestion_service.ingest_batch(
+                    source="bank_statement",
+                    batch=batch,
+                    fetched_count=parse_result.row_count,
+                    now=datetime.now(UTC),
+                )
+            except DuplicateSourceConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return serialize_ingestion_run(run)
+
+    @app.get("/api/ingestion/runs", response_model=list[IngestionRunOut])
+    def list_ingestion_runs() -> list[IngestionRunOut]:
+        return [serialize_ingestion_run(r) for r in store.list_ingestion_runs()]
+
+    @app.get("/api/ingestion/runs/{run_id}", response_model=IngestionRunOut)
+    def get_ingestion_run(run_id: str) -> IngestionRunOut:
+        run = store.get_ingestion_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Ingestion run '{run_id}' not found.")
+        return serialize_ingestion_run(run)
+
+    @app.post("/api/reconcile", response_model=list[CaseSummary])
+    def reconcile() -> list[CaseSummary]:
+        """Re-runs the EXISTING, unmodified BatchReconciler over every currently
+        stored source record (synthetic + ingested). Cases a human has already
+        finalized (APPROVED/REJECTED) are left untouched rather than reset back
+        to a fresh pending gate outcome.
+        """
+        with store.lock:
+            summary = BatchReconciler().run(
+                run_id=store.run_id,
+                settlements=list(store.settlements.values()),
+                items_by_settlement=store.items_by_settlement,
+                payments_by_settlement=store.payments_by_settlement,
+                ledger_pool=store.ledger_pool,
+                now=datetime.now(UTC),
+            )
+            for result in summary.results:
+                existing = store.get(result.case.case_id)
+                if existing is not None and existing.resolution.review_outcome in (
+                    "APPROVED",
+                    "REJECTED",
+                ):
+                    continue
+                store.put(result)
+
+            return [
+                case_summary(store.results[case_id])
+                for case_id in sorted(r.case.case_id for r in summary.results)
+            ]
 
     return app

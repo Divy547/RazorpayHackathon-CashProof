@@ -186,5 +186,84 @@ The Confidence Calibration and Quality engine bridges hypothesis belief with det
    - Identifies high-confidence hypotheses whose predicted targets strictly match evaluator GroundTruth, but were held in human review due to deterministic financial discrepancies (e.g. S3 fee/tax differences).
    - Accurately reports affected volume and blocker check attribution while strictly maintaining closed financial invariants.
 
+## Ingestion: Razorpay Test-Mode + Bank Statement CSV (Phase 9)
+
+Ingestion and reconciliation are separate responsibilities. The ingestion
+layer (`cashproof.application.ingestion.IngestionService`) fetches/parses
+external source data, normalizes it into the existing Phase 1 domain objects
+(Payment, Refund, Settlement, SettlementItem, LedgerEntry), performs
+idempotency/conflict checks, and stores accepted records. It never generates
+MatchCandidates, classifies exceptions, runs `BatchReconciler`, evaluates the
+gate, invokes AI, or reads GroundTruth. Real/test-ingested data enters the
+exact same, unmodified `BatchReconciler` path as synthetic benchmark data via
+`POST /api/reconcile` - there is only ever one reconciliation implementation.
+
+1. **Connector port (application-defined)**:
+   `cashproof.application.ports.SourceConnectorPort` is a read-only contract
+   (`status()` / `fetch(year, month)`) implemented by
+   `cashproof.infrastructure.razorpay.RazorpayConnector`. `ConnectorStatus`
+   never carries credential values, only `configured: bool` and a secret-free
+   `detail` string - an unconfigured or unreachable connector fails closed
+   (`IngestionRun.status = FAILED`) rather than crashing the API process.
+
+2. **Razorpay adapter (`packages/infrastructure/.../razorpay/`)**:
+   `client.py` is a thin, read-only httpx wrapper (HTTP Basic auth,
+   count/skip pagination, timeout -> `RazorpayClientError`) over
+   `GET /payments`, `/payments/{id}`, `/payments/{id}/refunds`, `/refunds`,
+   `/settlements`, `/settlements/{id}`, and
+   `/settlements/recon/combined?year=&month=`. `_dto.py` mirrors Razorpay's
+   own JSON field names (private to this sub-package). `normalizer.py`
+   converts paise -> existing integer minor units, Unix epoch seconds -> UTC
+   `datetime`, and ISO currency codes -> the existing `Currency` enum, raising
+   `IngestionValidationError` (fail closed) on anything that cannot be safely
+   mapped onto an existing domain invariant. Razorpay field names never appear
+   outside this sub-package.
+
+3. **Bank statement CSV adapter (`packages/infrastructure/.../bank/`)**:
+   `csv_parser.py` produces only `LedgerEntry` objects. Fail-closed: a single
+   malformed row (missing column, invalid amount/timestamp/currency/direction,
+   or an in-file duplicate with conflicting data) rejects the entire file via
+   `IngestionValidationError` rather than ingesting a partially valid, unsafe
+   subset. `sample_statement.csv` is a small, deterministic, credential-free
+   fixture for local demo/testing.
+
+4. **Idempotency (`InMemoryCaseStore`, extended)**: every accepted source
+   record's stable external id (Razorpay `pay_xxx`/`rfnd_xxx`/`setl_xxx`,
+   bank CSV `transaction_id`) is registered against a fingerprint of its
+   critical fields. Re-ingesting the same id with an identical fingerprint is
+   silently idempotent (`duplicate_count`); a different fingerprint under the
+   same id raises `DuplicateSourceConflictError` - source facts are never
+   silently overwritten. Classification happens in a first pass with no store
+   mutation, so a conflict anywhere in a batch leaves nothing from that batch
+   written (atomic accept-or-refuse).
+
+5. **`IngestionRun`**: an application-level dataclass (not a domain entity -
+   no financial invariants) recording `run_id`, `source`, `status`,
+   `fetched_count`, `accepted_count`, `rejected_count`, `duplicate_count`,
+   `validation_errors`, `failure_reason`, `started_at`/`completed_at`.
+   Persisted via `InMemoryCaseStore.ingestion_runs` (implements the
+   application-defined `IngestionResultStore` port).
+
+6. **API** (`apps/api`, composition root): `GET /api/ingestion/status`,
+   `POST /api/ingestion/razorpay`, `POST /api/ingestion/bank-statement`,
+   `GET /api/ingestion/runs[/{run_id}]`, and `POST /api/reconcile` (invokes
+   the existing, unmodified `BatchReconciler` over every currently stored
+   source record; a case a reviewer has already finalized APPROVED/REJECTED
+   is left untouched rather than being reset to a fresh pending gate outcome).
+   `apps/api/app.py` depends only on `SourceConnectorPort`, never on
+   `RazorpayConnector` directly - the concrete connector is wired in
+   `scripts/run_api.py`, exactly like `AIInvestigatorPort`/`AnthropicInvestigator`.
+
+7. **CLI** (`apps/cli/src/cashproof/cli/ingestion.py`): `status`,
+   `ingest-bank [--file] [--reconcile]`, `ingest-razorpay --year --month
+   [--reconcile]` - a standalone demonstration tool with no persistent store
+   across invocations, delegating every decision to `IngestionService` and
+   the existing `BatchReconciler`.
+
+8. **Frontend**: `/ingestion` ("Data Sources") shows connector
+   configured/unconfigured state (never secrets), a Razorpay trigger, a bank
+   CSV upload, accepted/rejected/duplicate results with validation errors, a
+   "Reconcile Now" action, and ingestion history.
+
 
 
