@@ -1,5 +1,9 @@
 # CashProof — Evidence-First Settlement Control
 
+**Live Demo:** https://razorpay-hackathon-cash-proof-yy6i.vercel.app/
+
+**API:** https://razorpayhackathon-cashproof.onrender.com/
+
 CashProof is a settlement reconciliation controller built on one premise:
 **reconciliation is not record matching, it is a certainty problem.** Matching
 a settlement to a ledger entry is trivial when the evidence is clean. The
