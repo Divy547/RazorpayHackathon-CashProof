@@ -16,7 +16,35 @@ import type {
   ReconcileResponse,
 } from "@/lib/types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const LOCAL_API_BASE_URL = "http://localhost:8000";
+const PRODUCTION_API_BASE_URL = "https://razorpayhackathon-cashproof.onrender.com";
+
+export function getApiBaseUrl(): string {
+  // 1. Explicit environment variable takes precedence
+  const envUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  if (envUrl) {
+    return envUrl.replace(/\/+$/, "");
+  }
+
+  // 2. In browser runtime, check if accessing locally or on deployed host
+  if (typeof window !== "undefined") {
+    const hostname = window.location.hostname;
+    if (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "0.0.0.0" ||
+      hostname.endsWith(".local")
+    ) {
+      return LOCAL_API_BASE_URL;
+    }
+    return PRODUCTION_API_BASE_URL;
+  }
+
+  // 3. In server / build-time environment, fall back based on NODE_ENV
+  return process.env.NODE_ENV === "production" ? PRODUCTION_API_BASE_URL : LOCAL_API_BASE_URL;
+}
+
+const API_BASE_URL = getApiBaseUrl();
 
 export class ApiError extends Error {
   status: number;
