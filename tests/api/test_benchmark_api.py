@@ -202,3 +202,134 @@ def test_get_benchmark_confidence_endpoints() -> None:
     # 3. 404 for unknown run_id
     not_found = client.get("/api/benchmarks/unknown_run_id_999/confidence")
     assert not_found.status_code == 404
+
+
+def test_benchmark_confidence_response_matches_frontend_contract() -> None:
+    """Regression test for the /confidence page crash (undefined 'thresholds').
+
+    ConfidenceIntelligenceClient.tsx and BenchmarkConfidenceResponse (types.ts)
+    require this exact top-level shape and these exact nested field names.
+    A previous stale-server incident showed this endpoint missing several of
+    these fields at runtime even though the source contract already declared
+    them - this test pins the full, currently-agreed contract so any future
+    source-level regression (a dropped/renamed field) fails CI immediately.
+    """
+    client = _make_client()
+    response = client.get("/api/benchmark/confidence")
+    assert response.status_code == 200
+    data = response.json()
+
+    top_level_fields = {
+        "run_id",
+        "total_observations",
+        "predictions_made",
+        "abstentions",
+        "overall_ece",
+        "overall_brier_score",
+        "high_confidence_precision",
+        "potential_automation_opportunities",
+        "potential_automation_volume_minor",
+        "currency",
+        "buckets",
+        "thresholds",
+        "gate_matrix",
+        "source_metrics",
+        "scenario_metrics",
+        "automation_opportunity",
+    }
+    assert top_level_fields <= set(data.keys())
+
+    # The exact field the crash traced to: bm.thresholds (NOT threshold_curve),
+    # a non-empty list whose entries expose the fields the threshold selector reads.
+    assert isinstance(data["thresholds"], list)
+    assert len(data["thresholds"]) > 0
+    threshold_entry = data["thresholds"][0]
+    assert {
+        "threshold",
+        "predictions_meeting_threshold",
+        "correct_predictions",
+        "incorrect_predictions",
+        "precision",
+        "coverage",
+        "false_auto_count_if_trusted_alone",
+    } <= set(threshold_entry.keys())
+
+    assert isinstance(data["buckets"], list)
+    bucket_entry = data["buckets"][0]
+    assert {
+        "bin_lower",
+        "bin_upper",
+        "bin_label",
+        "observation_count",
+        "empirical_accuracy",
+        "average_confidence",
+        "gate_pass_count",
+        "gate_fail_count",
+    } <= set(bucket_entry.keys())
+
+    assert isinstance(data["gate_matrix"], list) and len(data["gate_matrix"]) > 0
+    gate_cell = data["gate_matrix"][0]
+    assert {
+        "tier",
+        "confidence_range",
+        "total_count",
+        "gate_pass_count",
+        "gate_fail_count",
+        "dominant_failing_checks",
+    } <= set(gate_cell.keys())
+
+    assert isinstance(data["scenario_metrics"], list) and len(data["scenario_metrics"]) > 0
+    scenario_entry = data["scenario_metrics"][0]
+    assert {
+        "scenario_family",
+        "observation_count",
+        "average_confidence",
+        "precision",
+        "coverage",
+        "gate_pass_rate",
+        "abstention_rate",
+    } <= set(scenario_entry.keys())
+
+    automation = data["automation_opportunity"]
+    assert {
+        "threshold",
+        "opportunity_count",
+        "affected_settlement_net_minor",
+        "currency",
+        "failing_gate_checks",
+        "current_dispositions",
+        "sample_case_ids",
+    } <= set(automation.keys())
+
+
+def test_operational_confidence_response_matches_frontend_contract() -> None:
+    """Pins the GET /api/confidence contract consumed by the same /confidence page."""
+    client = _make_client()
+    response = client.get("/api/confidence")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert {
+        "total_cases",
+        "hypotheses_evaluated",
+        "average_confidence",
+        "high_confidence_count",
+        "medium_confidence_count",
+        "low_confidence_count",
+        "high_confidence_gate_blocked_count",
+        "buckets",
+        "gate_tiers",
+        "check_contexts",
+    } <= set(data.keys())
+
+    assert isinstance(data["gate_tiers"], list) and len(data["gate_tiers"]) > 0
+    tier_entry = data["gate_tiers"][0]
+    assert {
+        "tier",
+        "confidence_range",
+        "total_count",
+        "gate_pass_count",
+        "gate_fail_count",
+        "pass_rate_pct",
+        "failing_check_counts",
+    } <= set(tier_entry.keys())

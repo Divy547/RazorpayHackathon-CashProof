@@ -630,6 +630,14 @@ def test_get_exception_clusters_list(client: TestClient) -> None:
     assert "affected_settlement_net_minor" in first
     assert "representative_case_ids" in first
     assert len(first["representative_case_ids"]) <= 3
+    assert "disposition_counts" in first
+    assert isinstance(first["disposition_counts"], dict)
+    assert not isinstance(first["disposition_counts"], list)
+    assert len(first["disposition_counts"]) > 0
+    for disp, cnt in first["disposition_counts"].items():
+        assert isinstance(disp, str)
+        assert isinstance(cnt, int)
+        assert cnt > 0
 
 
 def test_get_exception_clusters_filter(client: TestClient) -> None:
@@ -639,6 +647,14 @@ def test_get_exception_clusters_filter(client: TestClient) -> None:
     assert len(body["clusters"]) == 1
     assert body["clusters"][0]["operational_category"] == "AMOUNT_INCONSISTENCY"
     assert body["clusters"][0]["dominant_failing_gate"] == "BRIDGE"
+
+    disp_resp = client.get("/api/exceptions/clusters?disposition=HUMAN_REVIEW")
+    assert disp_resp.status_code == 200
+    disp_body = disp_resp.json()
+    assert len(disp_body["clusters"]) > 0
+    for cluster in disp_body["clusters"]:
+        assert "HUMAN_REVIEW" in cluster["disposition_counts"]
+        assert cluster["disposition_counts"]["HUMAN_REVIEW"] > 0
 
 
 def test_get_exception_cluster_detail(client: TestClient) -> None:
@@ -654,6 +670,14 @@ def test_get_exception_cluster_detail(client: TestClient) -> None:
     assert "suggested_remediation" in body
     assert "case_ids" in body
     assert len(body["case_ids"]) > 0
+    assert "disposition_counts" in body
+    assert isinstance(body["disposition_counts"], dict)
+    assert not isinstance(body["disposition_counts"], list)
+    assert len(body["disposition_counts"]) > 0
+    for disp, cnt in body["disposition_counts"].items():
+        assert isinstance(disp, str)
+        assert isinstance(cnt, int)
+        assert cnt > 0
 
     # 404 for unknown key
     not_found = client.get("/api/exceptions/clusters/non_existent_key")

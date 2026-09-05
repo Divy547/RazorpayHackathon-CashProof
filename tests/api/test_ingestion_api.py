@@ -310,9 +310,102 @@ def test_reconcile_endpoint_invokes_existing_batch_reconciler_over_ingested_data
 
     reconcile_response = client.post("/api/reconcile")
     assert reconcile_response.status_code == 200
-    case_ids = [c["settlement_id"] for c in reconcile_response.json()]
+    reconcile_body = reconcile_response.json()
+    case_ids = [c["settlement_id"] for c in reconcile_body["cases"]]
     assert settlement_id in case_ids
+    assert reconcile_body["failed_settlements"] == []
 
     detail = client.get(f"/api/cases/{settlement_id}")
     assert detail.status_code == 200
     assert detail.json()["settlement_id"] == settlement_id
+
+
+def test_reconcile_endpoint_reports_malformed_settlement_without_aborting_the_batch() -> None:
+    """Regression test for the H1 finding: one settlement with zero settlement
+    items must not abort reconciliation of the rest of the batch, and must
+    never appear as a fabricated case.
+    """
+    settlement_id = "setl_ingested_valid"
+    settlement = Settlement(
+        settlement_id=settlement_id,
+        net_deposited_minor=100000,
+        currency=Currency.INR,
+        settled_at=FIXED_NOW,
+    )
+    item = SettlementItem(
+        item_id="item_ingested_valid",
+        settlement_id=settlement_id,
+        payment_id="pay_ingested_valid",
+        gross_minor=100000,
+        fee_minor=0,
+        tax_on_fee_minor=0,
+        netted_refund_minor=0,
+        adjustment_minor=0,
+        computed_net_minor=100000,
+    )
+    payment_record = Payment(
+        id="pay_ingested_valid",
+        order_ref="order_ingested_valid",
+        customer_ref="cust_1",
+        customer_name="Test Customer",
+        gross_minor=100000,
+        currency=Currency.INR,
+        captured_at=FIXED_NOW,
+        status=PaymentStatus.CAPTURED,
+    )
+    ledger_entry = LedgerEntry(
+        id="ledger_ingested_valid",
+        amount_minor=100000,
+        currency=Currency.INR,
+        timestamp=FIXED_NOW,
+        direction=Direction.CREDIT,
+        payment_ref=settlement_id,
+    )
+
+    # A settlement ingested with zero settlement items - e.g. a Razorpay
+    # settlement whose recon-combined report has not yet surfaced any
+    # payment-type rows for it. Seeded directly into the store (the ingestion
+    # layer performs no reconciliation-shaped validation of its own).
+    malformed_settlement_id = "setl_malformed_no_items"
+    malformed_settlement = Settlement(
+        settlement_id=malformed_settlement_id,
+        net_deposited_minor=50000,
+        currency=Currency.INR,
+        settled_at=FIXED_NOW,
+    )
+
+    store = _empty_store()
+    connector = ScriptedConnector(
+        configured=True,
+        batches=[
+            NormalizedSourceBatch(
+                settlements=(settlement, malformed_settlement),
+                settlement_items=(item,),
+                payments=(payment_record,),
+                ledger_entries=(ledger_entry,),
+            )
+        ],
+    )
+    client = _make_client(store, connector)
+
+    ingest_response = client.post("/api/ingestion/razorpay", json={"year": 2024, "month": 1})
+    assert ingest_response.status_code == 200
+    assert ingest_response.json()["status"] == "COMPLETED"
+
+    reconcile_response = client.post("/api/reconcile")
+    assert reconcile_response.status_code == 200
+    body = reconcile_response.json()
+
+    case_ids = {c["settlement_id"] for c in body["cases"]}
+    assert settlement_id in case_ids
+    assert malformed_settlement_id not in case_ids
+
+    assert len(body["failed_settlements"]) == 1
+    failure = body["failed_settlements"][0]
+    assert failure["settlement_id"] == malformed_settlement_id
+    assert failure["error_type"] == "EmptySettlementItemsError"
+
+    # No fabricated case/resolution for the malformed settlement anywhere.
+    assert client.get(f"/api/cases/{malformed_settlement_id}").status_code == 404
+    all_cases = client.get("/api/cases").json()
+    assert malformed_settlement_id not in {c["settlement_id"] for c in all_cases}

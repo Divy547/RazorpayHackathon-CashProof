@@ -166,6 +166,17 @@ class BankStatementIngestionResponse(IngestionRunOut):
     """Same shape as IngestionRunOut; named separately per the bank upload contract."""
 
 
+class SettlementReconciliationErrorOut(BaseModel):
+    settlement_id: str
+    error_type: str
+    message: str
+
+
+class ReconcileResponse(BaseModel):
+    cases: list[CaseSummary]
+    failed_settlements: list[SettlementReconciliationErrorOut]
+
+
 class BenchmarkRunRequest(BaseModel):
     seed: int = 42
     num_settlements: int = 100
@@ -495,8 +506,14 @@ class AutomationOpportunityOut(BaseModel):
 class BenchmarkConfidenceResponse(BaseModel):
     run_id: str
     total_observations: int
+    predictions_made: int = 0
+    abstentions: int = 0
     overall_ece: float
     overall_brier_score: float
+    high_confidence_precision: float = 0.0
+    potential_automation_opportunities: int = 0
+    potential_automation_volume_minor: int = 0
+    currency: str = "INR"
     buckets: list[ConfidenceBucketOut]
     thresholds: list[ThresholdMetricOut]
     gate_matrix: list[GateConfidenceCellOut]

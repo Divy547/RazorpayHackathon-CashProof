@@ -44,6 +44,7 @@ from cashproof.api.schemas import (
     OperationalConfidenceResponse,
     ProposalOut,
     ResolutionOut,
+    SettlementReconciliationErrorOut,
     SourceConfidenceMetricOut,
     ThresholdMetricOut,
     ToolCallOut,
@@ -51,6 +52,7 @@ from cashproof.api.schemas import (
 from cashproof.api.schemas import (
     InvestigationResult as InvestigationResultOut,
 )
+from cashproof.application.batch import SettlementReconciliationError
 from cashproof.application.confidence import OperationalConfidenceSummary
 from cashproof.application.gate_intelligence import (
     AutomationBlocker,
@@ -208,6 +210,16 @@ def investigation_result(run_result: InvestigationRunResult) -> InvestigationRes
             if run_result.preview_gate is not None
             else None
         ),
+    )
+
+
+def serialize_settlement_reconciliation_error(
+    error: SettlementReconciliationError,
+) -> SettlementReconciliationErrorOut:
+    return SettlementReconciliationErrorOut(
+        settlement_id=error.settlement_id,
+        error_type=error.error_type,
+        message=error.message,
     )
 
 
@@ -686,8 +698,14 @@ def serialize_benchmark_confidence(run_id: str, report: Any) -> BenchmarkConfide
     return BenchmarkConfidenceResponse(
         run_id=run_id,
         total_observations=getattr(report, "total_observations", 0),
+        predictions_made=getattr(report, "predictions_made", 0),
+        abstentions=getattr(report, "abstentions", 0),
         overall_ece=getattr(report, "overall_ece", 0.0),
         overall_brier_score=getattr(report, "overall_brier_score", 0.0),
+        high_confidence_precision=getattr(report, "high_confidence_precision", 0.0),
+        potential_automation_opportunities=getattr(report, "potential_automation_opportunities", 0),
+        potential_automation_volume_minor=getattr(report, "potential_automation_volume_minor", 0),
+        currency=getattr(opp, "currency", "INR"),
         buckets=buckets_out,
         thresholds=thresholds_out,
         gate_matrix=gate_matrix_out,

@@ -2,11 +2,11 @@ import { cn } from "@/lib/cn";
 import type { Tone } from "@/components/Badge";
 
 const TONE_TEXT: Record<Tone, string> = {
-  success: "text-emerald-400",
-  warning: "text-amber-400",
-  danger: "text-red-400",
-  neutral: "text-slate-100",
-  info: "text-sky-400",
+  success: "text-[#65745F]",
+  warning: "text-[#A47C52]",
+  danger: "text-[#A85F59]",
+  neutral: "text-[#171816]",
+  info: "text-[#4E6870]",
 };
 
 export function KpiCard({
@@ -25,15 +25,17 @@ export function KpiCard({
   return (
     <div
       className={cn(
-        "rounded-lg border bg-[#0d1219] p-4",
-        emphasize ? "border-emerald-500/40 ring-1 ring-emerald-500/20" : "border-slate-800",
+        "rounded-xl border bg-[#F8F6F0] p-4 transition-colors",
+        emphasize
+          ? "border-[#65745F]/40 ring-1 ring-[#65745F]/20 bg-[#EEEAE0]"
+          : "border-[#D9D5CA]",
       )}
     >
-      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
-      <div className={cn("mt-2 text-3xl font-semibold tabular-nums", TONE_TEXT[tone])}>
+      <div className="text-[11px] font-medium uppercase tracking-wider text-[#62635C]">{label}</div>
+      <div className={cn("mt-2 font-mono text-3xl font-semibold tabular-nums", TONE_TEXT[tone])}>
         {value}
       </div>
-      {hint && <div className="mt-1 text-xs text-slate-500">{hint}</div>}
+      {hint && <div className="mt-1.5 text-xs text-[#62635C]">{hint}</div>}
     </div>
   );
 }

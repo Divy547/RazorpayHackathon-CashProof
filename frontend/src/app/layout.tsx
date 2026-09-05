@@ -1,38 +1,41 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import { Nav } from "@/components/Nav";
+import type { ReactNode } from "react";
+import { Fraunces, Geist, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const ibmPlexMono = IBM_Plex_Mono({
+  variable: "--font-ibm-plex-mono",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
+
+const fraunces = Fraunces({
+  variable: "--font-fraunces",
+  subsets: ["latin"],
+  display: "swap",
+  axes: ["opsz"],
 });
 
 export const metadata: Metadata = {
   title: "CashProof | Evidence-First Settlement Control",
   description:
-    "Deterministic reconciliation control dashboard: candidate matching, evidence, gate evaluation, and resolution over Phase 2 settlement data.",
+    "Deterministic reconciliation control platform: candidate matching, evidence, gate evaluation, and resolution over settlement data.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${ibmPlexMono.variable} ${fraunces.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col bg-[#05070a] text-slate-200">
-        <Nav />
-        <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-8">{children}</main>
-        <footer className="border-t border-slate-800 px-6 py-4 text-center text-xs text-slate-600">
-          CashProof &middot; Deterministic software owns financial truth. AI investigates
-          ambiguity.
-        </footer>
-      </body>
+      <body className="min-h-full font-sans antialiased">{children}</body>
     </html>
   );
 }

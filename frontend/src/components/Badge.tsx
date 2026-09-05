@@ -4,11 +4,11 @@ import { cn } from "@/lib/cn";
 export type Tone = "success" | "warning" | "danger" | "neutral" | "info";
 
 const TONE_CLASSES: Record<Tone, string> = {
-  success: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-  warning: "bg-amber-500/10 text-amber-400 border-amber-500/30",
-  danger: "bg-red-500/10 text-red-400 border-red-500/30",
-  neutral: "bg-slate-500/10 text-slate-300 border-slate-500/30",
-  info: "bg-sky-500/10 text-sky-400 border-sky-500/30",
+  success: "bg-[#65745F]/12 text-[#65745F] border-[#65745F]/25",
+  warning: "bg-[#A47C52]/12 text-[#A47C52] border-[#A47C52]/25",
+  danger: "bg-[#A85F59]/12 text-[#A85F59] border-[#A85F59]/25",
+  neutral: "bg-[#EEEAE0] text-[#62635C] border-[#D9D5CA]",
+  info: "bg-[#4E6870]/12 text-[#4E6870] border-[#4E6870]/25",
 };
 
 export function Badge({
@@ -23,7 +23,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 whitespace-nowrap rounded border px-2 py-0.5 text-xs font-medium",
+        "inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-0.5 text-xs font-mono font-medium tracking-tight",
         TONE_CLASSES[tone],
         className,
       )}

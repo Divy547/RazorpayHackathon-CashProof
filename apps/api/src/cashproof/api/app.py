@@ -32,6 +32,7 @@ from cashproof.api.schemas import (
     IngestionTriggerRequest,
     InvestigationResult,
     OperationalConfidenceResponse,
+    ReconcileResponse,
     ReviewRequest,
 )
 from cashproof.api.serializers import (
@@ -47,6 +48,7 @@ from cashproof.api.serializers import (
     serialize_gate_intelligence,
     serialize_ingestion_run,
     serialize_operational_confidence,
+    serialize_settlement_reconciliation_error,
 )
 from cashproof.application.batch import BatchReconciler
 from cashproof.application.confidence import OperationalConfidenceService
@@ -484,12 +486,19 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"Ingestion run '{run_id}' not found.")
         return serialize_ingestion_run(run)
 
-    @app.post("/api/reconcile", response_model=list[CaseSummary])
-    def reconcile() -> list[CaseSummary]:
+    @app.post("/api/reconcile", response_model=ReconcileResponse)
+    def reconcile() -> ReconcileResponse:
         """Re-runs the EXISTING, unmodified BatchReconciler over every currently
         stored source record (synthetic + ingested). Cases a human has already
         finalized (APPROVED/REJECTED) are left untouched rather than reset back
         to a fresh pending gate outcome.
+
+        A settlement whose own source records fail a domain invariant (e.g. no
+        settlement items yet, or items that don't sum to net_deposited_minor)
+        never aborts the batch: BatchReconciler reports it as a
+        SettlementReconciliationError instead of a case, and every other
+        settlement still reconciles normally. Nothing is fabricated in its
+        place - it simply has no case, gate evaluation, or resolution.
         """
         with store.lock:
             summary = BatchReconciler().run(
@@ -509,9 +518,13 @@ def create_app(
                     continue
                 store.put(result)
 
-            return [
+            cases = [
                 case_summary(store.results[case_id])
                 for case_id in sorted(r.case.case_id for r in summary.results)
             ]
+            failed_settlements = [
+                serialize_settlement_reconciliation_error(e) for e in summary.failed_settlements
+            ]
+            return ReconcileResponse(cases=cases, failed_settlements=failed_settlements)
 
     return app

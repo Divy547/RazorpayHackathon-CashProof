@@ -152,6 +152,10 @@ def _reconcile_store(store: InMemoryCaseStore) -> None:
     print(f"  AUTO_RESOLVED:          {summary.auto_resolved_count}")
     print(f"  HUMAN_REVIEW:           {summary.human_review_count}")
     print(f"  UNRESOLVED:             {summary.unresolved_count}")
+    if summary.failed_settlements:
+        print(f"  FAILED (rejected):      {len(summary.failed_settlements)}")
+        for failure in summary.failed_settlements:
+            print(f"    - {failure.settlement_id}: {failure.error_type}: {failure.message}")
 
 
 def run_cli() -> int:
