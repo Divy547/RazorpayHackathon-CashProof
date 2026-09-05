@@ -146,6 +146,12 @@ def _case_id_for(dataset: GeneratedDataset, family: ScenarioFamily) -> str:
     return next(cid for cid, gt in gt_by_case.items() if gt.scenario_family == family)
 
 
+def test_health_endpoint(client: TestClient) -> None:
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
 def test_get_cases_returns_full_batch(client: TestClient, dataset: GeneratedDataset) -> None:
     response = client.get("/api/cases")
     assert response.status_code == 200

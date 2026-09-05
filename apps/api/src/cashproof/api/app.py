@@ -140,6 +140,10 @@ def create_app(
     connector: SourceConnectorPort = razorpay_connector or _UnconfiguredConnector()
     ingestion_service = IngestionService(store)
 
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
     @app.get("/api/cases", response_model=list[CaseSummary])
     def list_cases() -> list[CaseSummary]:
         return [
