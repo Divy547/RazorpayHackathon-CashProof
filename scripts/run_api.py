@@ -7,7 +7,13 @@ Phase 2 (benchmark) and the API layer are wired together - apps/api itself
 never imports cashproof.benchmark, matching the same production/evaluator
 boundary the CLI demo (apps/cli/src/cashproof/cli/demo.py) already follows.
 
-Run with: uv run python scripts/run_api.py
+Run locally with: uv run python scripts/run_api.py
+  Binds to 127.0.0.1:8000 by default.
+
+Run on Render (or any host requiring 0.0.0.0 + a platform-assigned port) by
+setting environment variables - no code change needed:
+  CASHPROOF_HOST=0.0.0.0
+  PORT=<platform-provided port>
 """
 
 from __future__ import annotations
@@ -33,6 +39,9 @@ from cashproof.infrastructure.razorpay import RazorpayConnector
 SEED = 42
 NUM_SETTLEMENTS = 100
 
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = "8000"
+
 # Gemini free-tier model as of Sept 2026 with confirmed function-calling
 # support, verified with a real authenticated call (not just
 # client.models.list() - gemini-2.5-flash was LISTED as available but
@@ -43,6 +52,25 @@ NUM_SETTLEMENTS = 100
 # ever retired too - re-verify with a real generate_content() call, not just
 # a models.list() membership check, since that alone is not sufficient.
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+
+
+def _resolve_host_and_port() -> tuple[str, int]:
+    """Resolve the uvicorn bind address from the environment.
+
+    CASHPROOF_HOST defaults to 127.0.0.1 (unchanged local behavior). PORT
+    defaults to 8000 - the same env var name Render (and most PaaS hosts)
+    inject with a platform-assigned value, so setting CASHPROOF_HOST=0.0.0.0
+    is the only extra configuration a deployment needs; PORT is picked up
+    automatically. Fails loudly on a non-integer PORT rather than silently
+    falling back, since a misconfigured deployment should not boot.
+    """
+    host = os.environ.get("CASHPROOF_HOST", DEFAULT_HOST)
+    port_raw = os.environ.get("PORT", DEFAULT_PORT)
+    try:
+        port = int(port_raw)
+    except ValueError as exc:
+        raise ValueError(f"PORT must be an integer, got {port_raw!r}") from exc
+    return host, port
 
 
 def _investigator_budget(
@@ -176,7 +204,8 @@ def main() -> None:
         benchmark_service=benchmark_service,
         razorpay_connector=razorpay_connector,
     )
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    host, port = _resolve_host_and_port()
+    uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":
